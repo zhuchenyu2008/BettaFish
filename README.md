@@ -119,6 +119,107 @@ LLM模型API赞助：<a href="https://aihubmix.com/?aff=8Ds9" target="_blank"><i
 | N+1 | 结果整合 | Report Agent收集所有分析结果和论坛内容 | Report Agent | - |
 | N+2 | 报告生成 | 动态选择模板和样式，多轮生成最终报告 | Report Agent + 模板引擎 | - |
 
+## 🧠 系统运行逻辑（TL;DR）
+
+1. **接入需求**：Flask 主应用接收你的提问，并将任务拆分给 Query、Media、Insight 三大 Agent。
+2. **并发调度**：三个 Agent 各自携带专属工具（搜索引擎、数据库、视频解析等）并行拉取素材。
+3. **论坛式推理**：ForumEngine 让 Agent 在多轮“论坛讨论”里互相质询、补充证据，主持人模型负责总结共识与分歧。
+4. **报告编排**：Report Agent 读取论坛结论、原始数据和模板库，多轮打磨出结构化、带图表的 HTML 报告。
+5. **多端输出**：最终报告可在网页查看、导出到 `final_reports/`，也可以通过 Streamlit 子应用拆分查看不同 Agent 的子结论。
+
+把 BettaFish 想象成“问一句话 → 多个研究员全自动调查 → 一位主编排版发布”的流水线，你只需要准备数据库与 LLM Key 即可复现同样的体验。
+
+## ⚙️ 快速部署指南
+
+即使对项目不熟悉，也可以按照下面的步骤把 BettaFish 跑起来：
+
+### 0. 前置准备
+
+| 组件 | 说明 |
+| --- | --- |
+| 操作系统 | Ubuntu 20.04+/Debian/CentOS、macOS、Windows (WSL) 均可 |
+| Python | 3.10 或 3.11（推荐新建虚拟环境） |
+| 数据库 | PostgreSQL 15（默认）或 MySQL 5.7+，需要提前创建数据库并开放远程访问 |
+| 浏览器驱动 | `playwright install` 将一次性下载（MindSpider 爬虫需要） |
+| LLM Key | 依据 `.env.example` 中的推荐厂商申请 API Key，并确认余量充足 |
+
+### 1. 获取代码与配置
+
+```bash
+git clone https://github.com/666ghj/BettaFish.git
+cd BettaFish
+cp .env.example .env   # 根据注释填入数据库、LLM、搜索 API 信息
+```
+
+> `config.py` 使用 Pydantic Settings 读取 `.env`，所以只要 `.env` 填好即可被所有模块共享。
+
+### 2A. 使用 Docker Compose（推荐）
+
+1. 准备好 `.env` 中的数据库账号、密码及端口（PostgreSQL 容器会读取这些变量）。
+2. 在项目根目录执行：
+
+```bash
+docker compose up -d
+```
+
+3. 等待 `bettafish`（主程序）和 `bettafish-db`（数据库）容器变成 `healthy`，访问 `http://<服务器IP>:5000` 即可开始提问。
+4. 报告、日志会自动挂载到宿主机的 `final_reports/`、`logs/` 等目录，方便备份。
+
+### 2B. 源码部署（自管数据库/自管 Python 环境）
+
+1. **创建虚拟环境并安装依赖**
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate    # Windows 用 .venv\Scripts\activate
+pip install -r requirements.txt
+playwright install   # 为 MindSpider 爬虫准备浏览器内核
+```
+
+2. **初始化数据库**（MindSpider、Insight 引擎都会使用同一个库）
+
+```bash
+python MindSpider/schema/init_database.py
+```
+
+3. **连通性自检**
+
+```bash
+python MindSpider/main.py --status   # 检查 .env、数据库、依赖是否齐全
+```
+
+若状态检查失败，请根据提示补齐缺失的 Key、调整数据库连通性，再继续下一步。
+
+### 3. 启动 BettaFish 主应用
+
+```bash
+python app.py
+```
+
+默认会监听 `0.0.0.0:5000`。如果你也想同时查看三个 Agent 的 Streamlit 子应用，可额外运行：
+
+```bash
+streamlit run InsightEngine/app.py --server.port 8501
+streamlit run MediaEngine/app.py --server.port 8502
+streamlit run QueryEngine/app.py --server.port 8503
+```
+
+（Docker 版已在 `docker-compose.yml` 中暴露 `5000/8501/8502/8503` 四个端口。）
+
+### 4. 触发完整分析
+
+1. 在网页端输入需要研究的主题，比如“武汉大学舆情”。
+2. 系统会自动调用 Query/Media/Insight Agent 搜集资料，并将 ForumEngine/ReportEngine 的输出写入 `logs/`、`final_reports/`。
+3. 报告生成后，点击页面链接即可在浏览器中查看 HTML 报告，也可以从 `final_reports/` 直接取回。
+
+### 5. 常见部署问题
+
+| 问题 | 快速排查 |
+| --- | --- |
+| 报错找不到数据库 | 确保 `.env` 中 `DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAME` 与真实数据库一致，并能被服务器访问 |
+| 无法调用 LLM | 检查对应 Agent 的 `*_API_KEY`、`*_BASE_URL`、`*_MODEL_NAME` 是否填写；使用 curl 先验证 API 可用性 |
+| Streamlit 页面空白 | 端口被其他程序占用，可在命令中加 `--server.port` 重新指定 |
+| MindSpider 登录失败 | 参考下方“MindSpider 爬虫”文档，关闭无头模式后重新扫码登录 |
+
 ### 项目代码结构树
 
 ```
@@ -213,6 +314,17 @@ BettaFish/
 ├── config.py                      # 全局配置文件
 └── requirements.txt               # Python依赖包清单
 ```
+
+## 🕸️ MindSpider 爬虫部署速览
+
+MindSpider 负责“自动发现热点 + 多平台深度采集”两大环节，是 BettaFish 数据输入最关键的来源。若你希望跑通完整链路，请先阅读[《MindSpider 部署指南》](./MindSpider/README.md)，并按下面的 checklist 执行：
+
+1. **配置环境变量**：在 `.env` 中补全 `MINDSPIDER_API_KEY`、`MINDSPIDER_BASE_URL`、`MINDSPIDER_MODEL_NAME`。
+2. **初始化数据库**：进入 `MindSpider/`，运行 `python schema/init_database.py` 创建 `daily_news`、`daily_topics` 等表。
+3. **首登各平台**：执行 `python main.py --deep-sentiment --platforms <platform_code> --test`，按照提示用手机扫码完成登录。
+4. **完整联调**：运行 `python main.py --complete --test`，确认“话题提取 → 爬虫”闭环正常，再回到主应用触发报告生成。
+
+MindSpider README 还包含**数据库结构说明、命令速查表、平台登录排障**等内容，帮助零基础用户也能独立完成部署与维护。
 
 ## 🚀 快速开始（Docker）
 
