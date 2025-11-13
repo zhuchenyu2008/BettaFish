@@ -28,6 +28,16 @@ MindSpider 运行示例
 - **数据库**: MySQL (数据持久化存储)
 - **并发处理**: AsyncIO (异步并发爬取)
 
+## ⚡ 快速部署概览（5 步跑通全链路）
+
+1. **准备环境**：安装 Python 3.11、PostgreSQL/MySQL，并执行 `playwright install`。
+2. **复制配置**：在 BettaFish 根目录复制 `.env.example` → `.env`，填入数据库 & DeepSeek API 信息。
+3. **初始化数据库**：进入 `MindSpider/schema/` 执行 `python init_database.py` 创建 `daily_news/daily_topics` 等表。
+4. **登录各平台**：运行 `python main.py --deep-sentiment --platforms <代码> --test`，使用手机扫码一次性保存登录状态。
+5. **完整演练**：执行 `python main.py --complete --test`，确认“话题提取 → 爬虫采集”流程无误后，即可让 BettaFish 主应用消费这些数据。
+
+后续只要把以上流程做成定时任务（如 `cron`），就能每天自动产出最新热点、评论与情绪结果。
+
 ## 项目结构
 
 ```
@@ -194,93 +204,103 @@ flowchart TB
    - tieba_note - 贴吧帖子
    - zhihu_content - 知乎内容
 
-## 安装部署
+## 🛠️ 部署步骤（零基础可复现）
 
-### 环境要求
+### Step 0. 环境要求
 
-- Python 3.9 或更高版本
-- MySQL 5.7 或更高版本，或 PostgreSQL
-- Conda环境：pytorch_python11（推荐）
-- 操作系统：Windows/Linux/macOS
+- **操作系统**：Windows、Linux、macOS（建议服务器使用 Ubuntu 20.04+）
+- **Python**：3.10/3.11（推荐新建独立虚拟环境）
+- **数据库**：MySQL 5.7+/PostgreSQL 15，且需提前创建 MindSpider 使用的数据库
+- **浏览器驱动**：Playwright（首次安装后自动缓存）
 
+> MindSpider 已集成在 BettaFish 仓库中，下面的示例默认你位于 `BettaFish/MindSpider` 目录。
 
-### 1. 克隆项目
+### Step 1. 克隆 BettaFish 并进入 MindSpider
 
 ```bash
-git clone https://github.com/yourusername/MindSpider.git
-cd MindSpider
+git clone https://github.com/666ghj/BettaFish.git
+cd BettaFish/MindSpider
 ```
 
-### 2. 创建并激活环境
+### Step 2. 创建虚拟环境
 
-#### Conda配置方法
-
-#### Conda配置方法
+**Conda**
 
 ```bash
-# 创建名为 pytorch_python11 的conda环境并指定Python版本
-conda create -n pytorch_python11 python=3.11
-# 激活该环境
-conda activate pytorch_python11
+conda create -n mindspider python=3.11
+conda activate mindspider
 ```
 
-#### UV配置方法
+**uv（轻量方案）**
 
-> [UV 是一种快速轻量级 Python 包环境管理工具，适用于低依赖及便捷管理需求。可参考：https://github.com/astral-sh/uv]
-
-- 安装uv（如未安装）
 ```bash
-pip install uv
-```
-- 创建虚拟环境并激活
-```bash
-uv venv --python 3.11 # 创建3.11环境
-source .venv/bin/activate   # Linux/macOS
-# 或
-.venv\Scripts\activate      # Windows
+pip install uv  # 首次使用时安装
+uv venv --python 3.11
+source .venv/bin/activate      # Linux/macOS
+.venv\Scripts\activate       # Windows PowerShell
 ```
 
-
-### 3. 安装依赖
+### Step 3. 安装依赖 & 浏览器内核
 
 ```bash
-# 安装Python依赖
 pip install -r requirements.txt
-
-或
-# uv版本更加快速
+# 或
 uv pip install -r requirements.txt
 
-
-# 安装Playwright浏览器驱动
-playwright install
+playwright install   # 安装 Chromium、Firefox、WebKit 内核（默认三选一即可）
 ```
 
-### 4. 配置系统
+### Step 4. 填写 `.env`
 
-复制.env.example文件为.env文件，放置在项目根目录。编辑 `.env` 文件，设置数据库和API配置：
+在 BettaFish 根目录复制 `.env.example` → `.env`（MindSpider 与主应用共用同一份配置）。重点确认以下字段：
 
-```python
-# MySQL数据库配置
-DB_HOST = "your_database_host"
-DB_PORT = 3306
-DB_USER = "your_username"
-DB_PASSWORD = "your_password"
-DB_NAME = "mindspider"
-DB_CHARSET = "utf8mb4"
+```ini
+# 数据库配置（示例为 PostgreSQL）
+DB_DIALECT=postgresql
+DB_HOST=127.0.0.1
+DB_PORT=5444
+DB_USER=bettafish
+DB_PASSWORD=bettafish
+DB_NAME=bettafish
 
-# MINDSPIDER API密钥
-MINDSPIDER_BASE_URL=your_api_base_url
-MINDSPIDER_API_KEY=sk-your-key
+# MindSpider 话题提取/关键词扩展所需的大模型
+MINDSPIDER_BASE_URL=https://api.deepseek.com
+MINDSPIDER_API_KEY=sk-xxxx
 MINDSPIDER_MODEL_NAME=deepseek-chat
 ```
 
-### 5. 初始化系统
+> 若数据库部署在 Docker 容器中，记得将 `DB_HOST` 改为容器 IP 或 docker-compose 中的服务名。
+
+### Step 5. 初始化数据库
 
 ```bash
-# 检查系统状态
+python schema/init_database.py
+```
+
+脚本会自动创建 `daily_news`、`daily_topics`、`topic_news_relation` 等核心表，并写入初始索引。
+
+### Step 6. 健康检查
+
+```bash
 python main.py --status
 ```
+
+该命令会一次性检查 `.env` 配置、数据库连通性、依赖安装情况，如出现错误可根据日志定位问题。
+
+### Step 7. 启动核心流程
+
+```bash
+# 先采集热点 + 提取关键词
+python main.py --broad-topic
+
+# 再基于关键词跑多平台爬虫（推荐先加 --test 验证逻辑）
+python main.py --deep-sentiment --test
+
+# 或者直接一键执行完整流程
+python main.py --complete --test
+```
+
+测试通过后，可去掉 `--test` 让系统按照 `.env` 中的数量配置进行全量采集。
 
 ## 使用指南
 
